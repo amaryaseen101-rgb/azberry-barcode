@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>مسح باركود - AzBerry</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: Arial, Tahoma, sans-serif;
+    margin: 0;
+    padding: 16px;
+    background: #f2f4f7;
+    direction: rtl;
+  }
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 18px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    max-width: 480px;
+    margin: 0 auto 14px auto;
+  }
+  h2 { text-align: center; color: #1F4E78; margin-top: 0; }
+  label { display: block; font-weight: bold; margin-bottom: 6px; color: #333; font-size: 14px; }
+  select, input {
+    width: 100%; padding: 12px; font-size: 16px;
+    border: 1px solid #ccc; border-radius: 8px; margin-bottom: 14px;
+  }
+  button {
+    width: 100%; padding: 14px; font-size: 16px; font-weight: bold;
+    border: none; border-radius: 8px; cursor: pointer; margin-bottom: 10px;
+  }
+  #scanBtn { background: #1F4E78; color: #fff; }
+  #saveBtn { background: #2E7D32; color: #fff; }
+  #saveBtn:disabled { background: #a5a5a5; }
+  #reader { width: 100%; border-radius: 8px; overflow: hidden; margin-bottom: 14px; }
+  .item-box { background: #E2EFDA; border-radius: 8px; padding: 12px; margin-bottom: 14px; display: none; }
+  .item-box.show { display: block; }
+  .item-box .barcode { font-size: 13px; color: #555; }
+  .item-box .name { font-size: 18px; font-weight: bold; color: #1F4E78; }
+  .new-item-note { color: #C0392B; font-size: 13px; margin-top: 6px; }
+  .toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: #2E7D32; color: #fff; padding: 12px 20px; border-radius: 8px;
+    font-size: 15px; display: none; z-index: 999; max-width: 90%; text-align: center;
+  }
+  .toast.show { display: block; }
+  .config-note {
+    max-width: 480px; margin: 0 auto 14px auto; font-size: 12px; color: #999; text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h2>📦 صرف مادة عبر الباركود</h2>
+
+  <label>الفرع</label>
+  <select id="branch">
+    <option value="نازناز">نازناز</option>
+    <option value="روناكي شارع 40">روناكي شارع 40</option>
+  </select>
+
+  <label>اسم العامل</label>
+  <input type="text" id="worker" list="workersList" placeholder="اكتب اسمك">
+  <datalist id="workersList"></datalist>
+
+  <button id="scanBtn">📷 مسح الباركود</button>
+  <div id="reader"></div>
+
+  <div class="item-box" id="itemBox">
+    <div class="barcode" id="itemBarcode"></div>
+    <div class="name" id="itemName"></div>
+    <div id="newItemNote" class="new-item-note" style="display:none;">
+      باركود غير مسجّل — اختر المادة المطابقة له من القائمة حتى نربطهم:
+      <input type="text" id="newItemNameInput" list="allItemsList" placeholder="اسم المادة (يجب مطابقاً تماماً لاسم موجود بشيت الأصناف)">
+      <datalist id="allItemsList"></datalist>
+    </div>
+  </div>
+
+  <label>الكمية</label>
+  <input type="number" id="quantity" placeholder="0" min="0" step="1">
+
+  <label>وحدة الصرف</label>
+  <select id="unit">
+    <option value="كرتون">كرتون</option>
+    <option value="قطعة">قطعة</option>
+  </select>
+
+  <button id="saveBtn" disabled>💾 حفظ الحركة</button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/**
+ * ⚠️ مهم جداً: غيّر هذا الرابط ليكون رابط نشر Apps Script الخاص فيك بالضبط
+ * (نفس الرابط يلي نسخته بعد ما ضغطت Deploy، بدون أي إضافة بآخره)
+ */
+var APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz0-gXZRRBmRPS1c2Yn1zKamKBohXYXIUvmMecv5zZclBrIJjhSYWzfIPc5xXGPbgAN/exec";
+
+var currentBarcode = null;
+var currentItemName = null;
+var isNewBarcode = false;
+
+function apiCall(action, params) {
+  var url = APPS_SCRIPT_URL + "?action=" + encodeURIComponent(action);
+  for (var key in params) {
+    url += "&" + key + "=" + encodeURIComponent(params[key]);
+  }
+  return fetch(url).then(function(r) { return r.json(); });
+}
+
+// تحميل قائمة كل أسماء المواد (لخانة تسجيل باركود جديد)
+apiCall("itemNames", {}).then(function(items) {
+  var dl = document.getElementById('allItemsList');
+  (items || []).forEach(function(name) {
+    var opt = document.createElement('option');
+    opt.value = name;
+    dl.appendChild(opt);
+  });
+}).catch(function(err) {
+  showToast('تعذر تحميل قائمة المواد: ' + err.message);
+});
+
+document.getElementById('scanBtn').addEventListener('click', function() {
+  var readerDiv = document.getElementById('reader');
+  readerDiv.innerHTML = '';
+  var html5QrCode = new Html5Qrcode('reader');
+
+  html5QrCode.start(
+    { facingMode: 'environment' },
+    { fps: 10, qrbox: { width: 250, height: 150 } },
+    function(decodedText) {
+      html5QrCode.stop().then(function() { document.getElementById('reader').innerHTML = ''; });
+      onScanSuccess(decodedText);
+    },
+    function() { /* تجاهل أخطاء المسح المستمرة */ }
+  ).catch(function() {
+    showToast('تعذر فتح الكاميرا: تأكد من إعطاء الإذن للموقع');
+  });
+});
+
+function onScanSuccess(barcode) {
+  currentBarcode = barcode;
+  document.getElementById('itemBarcode').innerText = 'الباركود: ' + barcode;
+  document.getElementById('itemBox').classList.add('show');
+  document.getElementById('itemName').innerText = '...جاري البحث';
+  document.getElementById('newItemNote').style.display = 'none';
+  document.getElementById('saveBtn').disabled = true;
+
+  apiCall("lookup", { barcode: barcode }).then(function(result) {
+    if (result && result.name) {
+      currentItemName = result.name;
+      isNewBarcode = false;
+      document.getElementById('itemName').innerText = result.name;
+      document.getElementById('saveBtn').disabled = false;
+    } else {
+      currentItemName = null;
+      isNewBarcode = true;
+      document.getElementById('itemName').innerText = 'باركود غير مسجّل';
+      document.getElementById('newItemNote').style.display = 'block';
+      document.getElementById('saveBtn').disabled = false;
+    }
+  }).catch(function(err) {
+    showToast('خطأ بالبحث: ' + err.message);
+  });
+}
+
+document.getElementById('saveBtn').addEventListener('click', function() {
+  var branch = document.getElementById('branch').value;
+  var worker = document.getElementById('worker').value.trim();
+  var quantity = document.getElementById('quantity').value;
+  var unit = document.getElementById('unit').value;
+
+  if (!worker) { showToast('اكتب اسم العامل'); return; }
+  if (!currentBarcode) { showToast('امسح الباركود أولاً'); return; }
+  if (!quantity || quantity <= 0) { showToast('أدخل الكمية'); return; }
+
+  var itemName = currentItemName;
+  if (isNewBarcode) {
+    itemName = document.getElementById('newItemNameInput').value.trim();
+    if (!itemName) { showToast('اختر اسم المادة المطابقة للباركود'); return; }
+  }
+
+  document.getElementById('saveBtn').disabled = true;
+  document.getElementById('saveBtn').innerText = 'جاري الحفظ...';
+
+  function finishSave() {
+    apiCall("saveMovement", {
+      branch: branch,
+      worker: worker,
+      material: itemName,
+      quantity: quantity,
+      unit: unit
+    }).then(function(result) {
+      if (result && result.error) throw new Error(result.error);
+      showToast('✅ تم حفظ الحركة بنجاح');
+      resetForm();
+    }).catch(function(err) {
+      showToast('❌ ' + err.message);
+      document.getElementById('saveBtn').disabled = false;
+      document.getElementById('saveBtn').innerText = '💾 حفظ الحركة';
+    });
+  }
+
+  if (isNewBarcode) {
+    apiCall("addBarcode", { barcode: currentBarcode, itemName: itemName }).then(function(result) {
+      if (result && result.error) throw new Error(result.error);
+      finishSave();
+    }).catch(function(err) {
+      showToast('❌ ' + err.message);
+      document.getElementById('saveBtn').disabled = false;
+      document.getElementById('saveBtn').innerText = '💾 حفظ الحركة';
+    });
+  } else {
+    finishSave();
+  }
+});
+
+function resetForm() {
+  currentBarcode = null;
+  currentItemName = null;
+  isNewBarcode = false;
+  document.getElementById('itemBox').classList.remove('show');
+  document.getElementById('quantity').value = '';
+  document.getElementById('saveBtn').disabled = true;
+  document.getElementById('saveBtn').innerText = '💾 حفظ الحركة';
+}
+
+function showToast(msg) {
+  var t = document.getElementById('toast');
+  t.innerText = msg;
+  t.classList.add('show');
+  setTimeout(function() { t.classList.remove('show'); }, 3200);
+}
+</script>
+
+</body>
+</html>
