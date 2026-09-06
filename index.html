@@ -57,6 +57,16 @@
 <div class="card">
   <h2>📦 صرف مادة عبر الباركود</h2>
 
+  <label>نوع الحركة</label>
+  <select id="movementType">
+    <option value="صرف">صرف (منصرف من المخزن)</option>
+    <option value="إضافة">إضافة (وارد جديد للمخزن)</option>
+    <option value="تحويل">تحويل بين الفروع</option>
+  </select>
+  <div id="transferNote" style="display:none; font-size:12px; color:#1F4E78; margin:-8px 0 14px 0;">
+    ℹ️ اختر الفرع "المصدر" تحت — التحويل يصير تلقائياً للفرع الآخر
+  </div>
+
   <label>الفرع</label>
   <select id="branch">
     <option value="نازناز">نازناز</option>
@@ -104,6 +114,10 @@ var APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxiCqwlxR5K9NHNPO
 var currentBarcode = null;
 var currentItemName = null;
 var isNewBarcode = false;
+
+document.getElementById('movementType').addEventListener('change', function() {
+  document.getElementById('transferNote').style.display = (this.value === 'تحويل') ? 'block' : 'none';
+});
 
 function apiCall(action, params) {
   var url = APPS_SCRIPT_URL + "?action=" + encodeURIComponent(action);
@@ -174,6 +188,7 @@ document.getElementById('saveBtn').addEventListener('click', function() {
   var worker = document.getElementById('worker').value.trim();
   var quantity = document.getElementById('quantity').value;
   var unit = document.getElementById('unit').value;
+  var movementType = document.getElementById('movementType').value;
 
   if (!worker) { showToast('اكتب اسم العامل'); return; }
   if (!currentBarcode) { showToast('امسح الباركود أولاً'); return; }
@@ -194,7 +209,8 @@ document.getElementById('saveBtn').addEventListener('click', function() {
       worker: worker,
       material: itemName,
       quantity: quantity,
-      unit: unit
+      unit: unit,
+      type: movementType
     }).then(function(result) {
       if (result && result.error) throw new Error(result.error);
       showToast('✅ تم حفظ الحركة بنجاح');
