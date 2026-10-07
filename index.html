@@ -47,6 +47,17 @@
     font-size: 15px; display: none; z-index: 999; max-width: 90%; text-align: center;
   }
   .toast.show { display: block; }
+  #rejectOverlay {
+    position: fixed; inset: 0; background: rgba(176,0,32,0.96); z-index: 2000;
+    display: none; flex-direction: column; align-items: center; justify-content: center;
+    padding: 24px; text-align: center; color: #fff;
+  }
+  #rejectOverlay.show { display: flex; animation: flash .35s 3; }
+  #rejectOverlay .big { font-size: 64px; margin-bottom: 12px; }
+  #rejectOverlay .msg { font-size: 22px; font-weight: bold; line-height: 1.7; margin-bottom: 8px; }
+  #rejectOverlay .sub { font-size: 15px; opacity: .9; margin-bottom: 24px; }
+  #rejectOverlay button { background: #fff; color: #B00020; max-width: 340px; font-size: 18px; }
+  @keyframes flash { 0%,100% { background: rgba(176,0,32,0.96); } 50% { background: rgba(255,0,40,1); } }
   .config-note {
     max-width: 480px; margin: 0 auto 14px auto; font-size: 12px; color: #999; text-align: center;
   }
@@ -102,6 +113,13 @@
   <button id="saveBtn" disabled>💾 حفظ الحركة</button>
 </div>
 
+<div id="rejectOverlay">
+  <div class="big">⛔</div>
+  <div class="msg" id="rejectMsg"></div>
+  <div class="sub">الباركود الصحيح يبدأ بـ AZB (ملصق النظام الملصوق على المادة) وليس باركود المصنع على الكرتون</div>
+  <button id="rejectOk">حسناً، سأمسح ملصق AZB</button>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -110,6 +128,37 @@
  * (نفس الرابط يلي نسخته بعد ما ضغطت Deploy، بدون أي إضافة بآخره)
  */
 var APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycby_6U-yXwUaFLGwjIxXR9Nz5h6X6HLZLv8QNGZ588FEnC0ylfS1Gg0OewvzbHUPTvil/exec";
+
+var AZB_PATTERN = /^AZB\d{4,}$/;
+
+function isAzb(code) {
+  return AZB_PATTERN.test(String(code || '').trim().toUpperCase());
+}
+
+function beepError() {
+  try {
+    var C = window.AudioContext || window.webkitAudioContext;
+    var ctx = new C();
+    var o = ctx.createOscillator();
+    var g = ctx.createGain();
+    o.type = 'square'; o.frequency.value = 220; g.gain.value = 0.25;
+    o.connect(g); g.connect(ctx.destination);
+    o.start();
+    setTimeout(function() { o.stop(); ctx.close(); }, 700);
+  } catch (e) {}
+}
+
+function showReject(message) {
+  resetForm();
+  document.getElementById('rejectMsg').innerText = message;
+  document.getElementById('rejectOverlay').classList.add('show');
+  try { if (navigator.vibrate) navigator.vibrate([400, 150, 400, 150, 400]); } catch (e) {}
+  beepError();
+}
+
+document.getElementById('rejectOk').addEventListener('click', function() {
+  document.getElementById('rejectOverlay').classList.remove('show');
+});
 
 var currentBarcode = null;
 var currentItemName = null;
@@ -142,7 +191,7 @@ apiCall("itemNames", {}).then(function(items) {
 document.getElementById('scanBtn').addEventListener('click', function() {
   var readerDiv = document.getElementById('reader');
   readerDiv.innerHTML = '';
-  var html5QrCode = new Html5Qrcode('reader');
+  var html5QrCode = new Html5Qrcode('reader', { formatsToSupport: [Html5QrcodeSupportedFormats.CODE_128], verbose: false });
 
   html5QrCode.start(
     { facingMode: 'environment' },
@@ -158,6 +207,14 @@ document.getElementById('scanBtn').addEventListener('click', function() {
 });
 
 function onScanSuccess(barcode) {
+  barcode = String(barcode || '').trim().toUpperCase();
+
+  // 🔒 رفض فوري محلي لأي كود ليس AZB (باركود المصنع)
+  if (!isAzb(barcode)) {
+    showReject('⛔ هذا باركود المصنع!\nامسح ملصق AZB');
+    return;
+  }
+
   currentBarcode = barcode;
   document.getElementById('itemBarcode').innerText = 'الباركود: ' + barcode;
   document.getElementById('itemBox').classList.add('show');
@@ -171,12 +228,11 @@ function onScanSuccess(barcode) {
       isNewBarcode = false;
       document.getElementById('itemName').innerText = result.name;
       document.getElementById('saveBtn').disabled = false;
+    } else if (result && result.error === 'NOT_AZB') {
+      showReject('⛔ هذا باركود المصنع!\nامسح ملصق AZB');
     } else {
-      currentItemName = null;
-      isNewBarcode = true;
-      document.getElementById('itemName').innerText = 'باركود غير مسجّل';
-      document.getElementById('newItemNote').style.display = 'block';
-      document.getElementById('saveBtn').disabled = false;
+      // كود AZB لكنه غير مربوط بمادة — لا يُسمح بالربط من هذه الصفحة
+      showReject('كود AZB غير مسجّل بأي مادة.\nأبلغ المسؤول ولا تحفظ الحركة.');
     }
   }).catch(function(err) {
     showToast('خطأ بالبحث: ' + err.message);
